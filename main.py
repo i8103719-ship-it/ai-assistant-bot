@@ -156,8 +156,8 @@ async def main() -> None:
     
     # --- НАСТРОЙКА CORS (Чтобы сайт с GitHub мог делать запросы) ---
     cors = cors_setup(app, defaults={
-        "*": ResourceOptions(
-            allow_credentials=True,
+        "https://i8103719-ship-it.github.io": ResourceOptions(
+            allow_credentials=False,
             expose_headers="*",
             allow_headers="*",
             allow_methods="*"
