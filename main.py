@@ -24,13 +24,13 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://your-domain.example")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
-# ИСПОЛЬЗУЕМ АКТУАЛЬНУЮ МОДЕЛЬ
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# Используем модель, которую Google указал в ошибке
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
     raise RuntimeError("Set BOT_TOKEN and GEMINI_API_KEY environment variables.")
 
-# Инициализация нового клиента Google
+# Инициализация клиента
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 bot = Bot(token=BOT_TOKEN)
@@ -39,7 +39,6 @@ dp = Dispatcher()
 
 async def generate_answer(prompt: str) -> str:
     try:
-        # Вызов модели через новый SDK
         response = await asyncio.to_thread(
             client.models.generate_content,
             model=GEMINI_MODEL,
@@ -86,12 +85,9 @@ async def chat_handler(request: web.Request) -> web.Response:
     if not isinstance(text, str) or not text.strip():
         raise web.HTTPBadRequest(text="Message cannot be empty")
 
-    # ==========================================
-    # ВРЕМЕННО ОТКЛЮЧАЕМ ПРОВЕРКУ TELEGRAM
-    # ==========================================
+    # Временно отключаем проверку Telegram, чтобы точно увидеть ответ от ИИ
     log.info("ПРОВЕРКА ОТКЛЮЧЕНА. Полученные данные: %s", init_data[:20])
     user_id = "test_user"
-    # ==========================================
 
     log.info("Chat request from user_id=%s", user_id)
 
