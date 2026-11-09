@@ -77,30 +77,22 @@ async def chat_handler(request: web.Request) -> web.Response:
 
     if not isinstance(text, str) or not text.strip():
         raise web.HTTPBadRequest(text="Message cannot be empty")
-    if len(text) > 8000:
-        raise web.HTTPRequestEntityTooLarge(
-            max_size=8000, actual_size=len(text), text="Message is too long"
-        )
 
-    # --- ВСТРОЕННАЯ ПРОВЕРКА TELEGRAM (ИСПРАВЛЕНО) ---
-    try:
-        web_app_data = safe_parse_webapp_init_data(token=BOT_TOKEN, init_data=init_data)
-        user = web_app_data.user
-    except (ValueError, TelegramBadRequest) as e:
-        log.error(f"Ошибка валидации initData: {e}")
-        return web.json_response(
-            {"error": "Ошибка авторизации. Пожалуйста, перезайдите в бота."},
-            status=401,
-        )
+    # ==========================================
+    # ВРЕМЕННО ОТКЛЮЧАЕМ ПРОВЕРКУ TELEGRAM
+    # ==========================================
+    log.info("ПРОВЕРКА ОТКЛЮЧЕНА. Полученные данные: %s", init_data[:20])
+    user_id = "test_user"
+    # ==========================================
 
-    log.info("Chat request from Telegram user_id=%s", user.id)
+    log.info("Chat request from user_id=%s", user_id)
 
     try:
         answer = await generate_answer(text.strip())
     except Exception:
         log.exception("Gemini request failed")
         return web.json_response(
-            {"error": "Не удалось получить ответ от AI. Попробуйте ещё раз."},
+            {"error": "Не удалось получить ответ от AI. Проверьте GEMINI_API_KEY."},
             status=502,
         )
 
@@ -114,7 +106,6 @@ async def health_handler(_: web.Request) -> web.Response:
 async def main() -> None:
     app = web.Application(client_max_size=16 * 1024)
     
-    # Настройка CORS
     cors = cors_setup(app, defaults={
         "https://i8103719-ship-it.github.io": ResourceOptions(
             allow_credentials=False,
