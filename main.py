@@ -14,6 +14,7 @@ from aiogram.types import (
     WebAppInfo,
 )
 from google import genai
+from google.genai import errors
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("ai-assistant")
@@ -25,8 +26,8 @@ WEBAPP_URL = os.getenv("WEBAPP_URL", "https://your-domain.example")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
 
-# АКТУАЛЬНАЯ МОДЕЛЬ
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# АКТУАЛЬНАЯ СТАБИЛЬНАЯ МОДЕЛЬ
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
     raise RuntimeError("Set BOT_TOKEN and GEMINI_API_KEY environment variables.")
@@ -36,39 +37,38 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
-# Функция для вывода доступных моделей в логи (для отладки)
-async def log_available_models():
-    try:
-        models = await asyncio.to_thread(client.models.list)
-        log.info("--- ДОСТУПНЫЕ МОДЕЛИ ---")
-        for m in models:
-            if "generateContent" in m.supported_generation_methods:
-                log.info(f"Модель: {m.name}")
-        log.info("------------------------")
-    except Exception as e:
-        log.error(f"Не удалось получить список моделей: {e}")
-
-
 async def generate_answer(prompt: str) -> str:
-    try:
-        response = await asyncio.wait_for(
-            asyncio.to_thread(
-                client.models.generate_content,
-                model=GEMINI_MODEL,
-                contents=prompt
-            ),
-            timeout=25.0
-        )
-        answer = getattr(response, "text", None)
-        if not answer:
-            raise RuntimeError("Gemini вернул пустой ответ")
-        return answer.strip()
-    except asyncio.TimeoutError:
-        log.error("Google не ответил за 25 секунд")
-        raise RuntimeError("Превышено время ожидания. Попробуйте позже.")
-    except Exception as e:
-        log.error(f"Ошибка при обращении к Gemini: {e}")
-        raise
+    # Делаем до 3 попыток с нарастающей задержкой при перегрузке (503)
+    for attempt in range(3):
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.models.generate_content,
+                    model=GEMINI_MODEL,
+                    contents=prompt
+                ),
+                timeout=25.0
+            )
+            answer = getattr(response, "text", None)
+            if not answer:
+                raise RuntimeError("Gemini вернул пустой ответ")
+            return answer.strip()
+        except (errors.APIError, errors.ServerError) as e:
+            # Если сервер перегружен (503), пробуем еще раз
+            if getattr(e, 'code', None) == 503 or "UNAVAILABLE" in str(e):
+                log.warning(f"Попытка {attempt+1} не удалась (503). Ждем...")
+                if attempt < 2:
+                    await asyncio.sleep(2 * (attempt + 1))
+                    continue
+            log.error(f"Ошибка API Gemini: {e}")
+            raise RuntimeError("Нейросеть временно перегружена. Попробуйте через минуту.")
+        except asyncio.TimeoutError:
+            log.error("Google не ответил за 25 секунд")
+            raise RuntimeError("Превышено время ожидания. Попробуйте позже.")
+        except Exception as e:
+            log.error(f"Неизвестная ошибка: {e}")
+            raise
+    raise RuntimeError("Не удалось получить ответ после нескольких попыток.")
 
 
 @dp.message(CommandStart())
@@ -98,18 +98,13 @@ async def chat_handler(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(text="Invalid JSON")
 
     text = payload.get("message", "")
-    init_data = payload.get("initData", "")
-
     if not isinstance(text, str) or not text.strip():
         raise web.HTTPBadRequest(text="Сообщение не может быть пустым")
 
     try:
         answer = await generate_answer(text.strip())
     except Exception as e:
-        return web.json_response(
-            {"error": str(e)},
-            status=502,
-        )
+        return web.json_response({"error": str(e)}, status=502)
 
     return web.json_response({"reply": answer})
 
@@ -119,9 +114,6 @@ async def health_handler(_: web.Request) -> web.Response:
 
 
 async def main() -> None:
-    # Выводим список моделей при старте
-    await log_available_models()
-
     app = web.Application(client_max_size=16 * 1024)
     
     cors = cors_setup(app, defaults={
