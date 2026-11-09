@@ -25,8 +25,8 @@ WEBAPP_URL = os.getenv("WEBAPP_URL", "https://your-domain.example")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
 
-# САМАЯ СТАБИЛЬНАЯ МОДЕЛЬ
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+# АКТУАЛЬНАЯ МОДЕЛЬ
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
     raise RuntimeError("Set BOT_TOKEN and GEMINI_API_KEY environment variables.")
@@ -36,24 +36,36 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
+# Функция для вывода доступных моделей в логи (для отладки)
+async def log_available_models():
+    try:
+        models = await asyncio.to_thread(client.models.list)
+        log.info("--- ДОСТУПНЫЕ МОДЕЛИ ---")
+        for m in models:
+            if "generateContent" in m.supported_generation_methods:
+                log.info(f"Модель: {m.name}")
+        log.info("------------------------")
+    except Exception as e:
+        log.error(f"Не удалось получить список моделей: {e}")
+
+
 async def generate_answer(prompt: str) -> str:
     try:
-        # Добавляем таймаут в 20 секунд, чтобы сервер не висел вечно
         response = await asyncio.wait_for(
             asyncio.to_thread(
                 client.models.generate_content,
                 model=GEMINI_MODEL,
                 contents=prompt
             ),
-            timeout=20.0
+            timeout=25.0
         )
         answer = getattr(response, "text", None)
         if not answer:
-            raise RuntimeError("Gemini returned an empty response")
+            raise RuntimeError("Gemini вернул пустой ответ")
         return answer.strip()
     except asyncio.TimeoutError:
-        log.error("Google не ответил за 20 секунд")
-        raise RuntimeError("Превышено время ожидания ответа от нейросети. Попробуйте позже.")
+        log.error("Google не ответил за 25 секунд")
+        raise RuntimeError("Превышено время ожидания. Попробуйте позже.")
     except Exception as e:
         log.error(f"Ошибка при обращении к Gemini: {e}")
         raise
@@ -89,14 +101,11 @@ async def chat_handler(request: web.Request) -> web.Response:
     init_data = payload.get("initData", "")
 
     if not isinstance(text, str) or not text.strip():
-        raise web.HTTPBadRequest(text="Message cannot be empty")
-
-    log.info("Chat request. Данные Telegram: %s", init_data[:10] if init_data else "ПУСТО")
+        raise web.HTTPBadRequest(text="Сообщение не может быть пустым")
 
     try:
         answer = await generate_answer(text.strip())
     except Exception as e:
-        # Возвращаем понятную ошибку на сайт
         return web.json_response(
             {"error": str(e)},
             status=502,
@@ -110,6 +119,9 @@ async def health_handler(_: web.Request) -> web.Response:
 
 
 async def main() -> None:
+    # Выводим список моделей при старте
+    await log_available_models()
+
     app = web.Application(client_max_size=16 * 1024)
     
     cors = cors_setup(app, defaults={
