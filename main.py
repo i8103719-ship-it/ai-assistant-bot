@@ -24,7 +24,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://your-domain.example")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash") # Обновил на актуальную модель
+# ИСПОЛЬЗУЕМ АКТУАЛЬНУЮ МОДЕЛЬ
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
     raise RuntimeError("Set BOT_TOKEN and GEMINI_API_KEY environment variables.")
@@ -37,16 +38,20 @@ dp = Dispatcher()
 
 
 async def generate_answer(prompt: str) -> str:
-    # Используем новый метод генерации
-    response = await asyncio.to_thread(
-        client.models.generate_content,
-        model=GEMINI_MODEL,
-        contents=prompt
-    )
-    answer = getattr(response, "text", None)
-    if not answer:
-        raise RuntimeError("Gemini returned an empty response")
-    return answer.strip()
+    try:
+        # Вызов модели через новый SDK
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model=GEMINI_MODEL,
+            contents=prompt
+        )
+        answer = getattr(response, "text", None)
+        if not answer:
+            raise RuntimeError("Gemini returned an empty response")
+        return answer.strip()
+    except Exception as e:
+        log.error(f"Ошибка при обращении к Gemini: {e}")
+        raise
 
 
 @dp.message(CommandStart())
@@ -95,7 +100,7 @@ async def chat_handler(request: web.Request) -> web.Response:
     except Exception as e:
         log.exception(f"Gemini request failed: {e}")
         return web.json_response(
-            {"error": "Не удалось получить ответ от AI. Проверьте GEMINI_API_KEY и VPN."},
+            {"error": f"Не удалось получить ответ от AI. Ошибка: {e}"},
             status=502,
         )
 
