@@ -13,9 +13,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     WebAppInfo,
 )
-from aiogram.utils.web_app import safe_parse_webapp_init_data
-from aiogram.exceptions import TelegramBadRequest
-import google.generativeai as genai
+from google import genai
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("ai-assistant")
@@ -26,20 +24,25 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://your-domain.example")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash") # Обновил на актуальную модель
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
     raise RuntimeError("Set BOT_TOKEN and GEMINI_API_KEY environment variables.")
 
-genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel(GEMINI_MODEL)
+# Инициализация нового клиента Google
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
 async def generate_answer(prompt: str) -> str:
-    response = await asyncio.to_thread(gemini_model.generate_content, prompt)
+    # Используем новый метод генерации
+    response = await asyncio.to_thread(
+        client.models.generate_content,
+        model=GEMINI_MODEL,
+        contents=prompt
+    )
     answer = getattr(response, "text", None)
     if not answer:
         raise RuntimeError("Gemini returned an empty response")
@@ -89,10 +92,10 @@ async def chat_handler(request: web.Request) -> web.Response:
 
     try:
         answer = await generate_answer(text.strip())
-    except Exception:
-        log.exception("Gemini request failed")
+    except Exception as e:
+        log.exception(f"Gemini request failed: {e}")
         return web.json_response(
-            {"error": "Не удалось получить ответ от AI. Проверьте GEMINI_API_KEY."},
+            {"error": "Не удалось получить ответ от AI. Проверьте GEMINI_API_KEY и VPN."},
             status=502,
         )
 
