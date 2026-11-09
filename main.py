@@ -24,30 +24,36 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://your-domain.example")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
-# Используем модель, которую Google указал в ошибке
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+
+# САМАЯ СТАБИЛЬНАЯ МОДЕЛЬ
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
     raise RuntimeError("Set BOT_TOKEN and GEMINI_API_KEY environment variables.")
 
-# Инициализация клиента
 client = genai.Client(api_key=GEMINI_API_KEY)
-
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
 async def generate_answer(prompt: str) -> str:
     try:
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=GEMINI_MODEL,
-            contents=prompt
+        # Добавляем таймаут в 20 секунд, чтобы сервер не висел вечно
+        response = await asyncio.wait_for(
+            asyncio.to_thread(
+                client.models.generate_content,
+                model=GEMINI_MODEL,
+                contents=prompt
+            ),
+            timeout=20.0
         )
         answer = getattr(response, "text", None)
         if not answer:
             raise RuntimeError("Gemini returned an empty response")
         return answer.strip()
+    except asyncio.TimeoutError:
+        log.error("Google не ответил за 20 секунд")
+        raise RuntimeError("Превышено время ожидания ответа от нейросети. Попробуйте позже.")
     except Exception as e:
         log.error(f"Ошибка при обращении к Gemini: {e}")
         raise
@@ -85,18 +91,14 @@ async def chat_handler(request: web.Request) -> web.Response:
     if not isinstance(text, str) or not text.strip():
         raise web.HTTPBadRequest(text="Message cannot be empty")
 
-    # Временно отключаем проверку Telegram, чтобы точно увидеть ответ от ИИ
-    log.info("ПРОВЕРКА ОТКЛЮЧЕНА. Полученные данные: %s", init_data[:20])
-    user_id = "test_user"
-
-    log.info("Chat request from user_id=%s", user_id)
+    log.info("Chat request. Данные Telegram: %s", init_data[:10] if init_data else "ПУСТО")
 
     try:
         answer = await generate_answer(text.strip())
     except Exception as e:
-        log.exception(f"Gemini request failed: {e}")
+        # Возвращаем понятную ошибку на сайт
         return web.json_response(
-            {"error": f"Не удалось получить ответ от AI. Ошибка: {e}"},
+            {"error": str(e)},
             status=502,
         )
 
