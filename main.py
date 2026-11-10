@@ -14,7 +14,6 @@ from aiogram.types import (
     WebAppInfo,
 )
 from google import genai
-from google.genai import errors
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("ai-assistant")
@@ -26,49 +25,35 @@ WEBAPP_URL = os.getenv("WEBAPP_URL", "https://your-domain.example")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
 
-# АКТУАЛЬНАЯ СТАБИЛЬНАЯ МОДЕЛЬ
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+# Актуальная стабильная модель
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
     raise RuntimeError("Set BOT_TOKEN and GEMINI_API_KEY environment variables.")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+# Задаем таймаут на уровне клиента (в миллисекундах)
+client = genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 60000})
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
 async def generate_answer(prompt: str) -> str:
-    # Делаем до 3 попыток с нарастающей задержкой при перегрузке (503)
-    for attempt in range(3):
-        try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    client.models.generate_content,
-                    model=GEMINI_MODEL,
-                    contents=prompt
-                ),
-                timeout=25.0
-            )
-            answer = getattr(response, "text", None)
-            if not answer:
-                raise RuntimeError("Gemini вернул пустой ответ")
-            return answer.strip()
-        except (errors.APIError, errors.ServerError) as e:
-            # Если сервер перегружен (503), пробуем еще раз
-            if getattr(e, 'code', None) == 503 or "UNAVAILABLE" in str(e):
-                log.warning(f"Попытка {attempt+1} не удалась (503). Ждем...")
-                if attempt < 2:
-                    await asyncio.sleep(2 * (attempt + 1))
-                    continue
-            log.error(f"Ошибка API Gemini: {e}")
-            raise RuntimeError("Нейросеть временно перегружена. Попробуйте через минуту.")
-        except asyncio.TimeoutError:
-            log.error("Google не ответил за 25 секунд")
-            raise RuntimeError("Превышено время ожидания. Попробуйте позже.")
-        except Exception as e:
-            log.error(f"Неизвестная ошибка: {e}")
-            raise
-    raise RuntimeError("Не удалось получить ответ после нескольких попыток.")
+    try:
+        # Убираем asyncio.wait_for, полагаемся на таймаут клиента
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model=GEMINI_MODEL,
+            contents=prompt
+        )
+        answer = getattr(response, "text", None)
+        if not answer:
+            raise RuntimeError("Gemini вернул пустой ответ")
+        return answer.strip()
+    except Exception as e:
+        log.error(f"Ошибка при обращении к Gemini: {e}")
+        # Возвращаем более дружелюбную ошибку
+        raise RuntimeError("Не удалось получить ответ от нейросети. Попробуйте позже.")
 
 
 @dp.message(CommandStart())
